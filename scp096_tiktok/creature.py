@@ -25,6 +25,14 @@ def _roty(v, a):
     return _v(c * v[0] + s * v[2], v[1], -s * v[0] + c * v[2])
 
 
+def _add_jaw(j):
+    """Unterkiefer haengt entlang der Kopfachse herab - je weiter offen, desto laenger das Maul."""
+    up = _n(j["crown"] - j["chin"])
+    j["jawtip"] = j["chin"] - up * (0.05 + 0.3 * j["jaw"]) + _v(0, 0, 0.02)
+    j["ribs"] = j["spine"] + (j["chest"] - j["spine"]) * 0.08      # Brustkorb beginnt knapp ueber der Taille
+    return j
+
+
 def _hand(j, side, wrist, d, curl, spread=0.55, length=0.24):
     """Lange Finger mit Klauen, aufgefaechert um Richtung d."""
     d = _n(d)
@@ -76,7 +84,7 @@ def pose_run(t, phase, lean=0.5, stride=1.0, lift=1.0, arm=1.0):
     th2 = th + 0.2
     j["chest"] = j["spine"] + _v(0, math.cos(th2), math.sin(th2)) * 0.38
     for side, sx in (("l", -1), ("r", 1)):
-        j[f"shoulder_{side}"] = j["chest"] + _roty(_v(0.21 * sx, -0.05 + 0.06 * sx * math.sin(2 * math.pi * p), -0.02), twist)
+        j[f"shoulder_{side}"] = j["chest"] + _roty(_v(0.245 * sx, -0.05 + 0.06 * sx * math.sin(2 * math.pi * p), -0.02), twist)
     j["neck"] = j["chest"] + _v(0, math.cos(th + 0.75), math.sin(th + 0.75)) * 0.17
     jit = 0.12 * math.sin(t * 23) * (math.sin(t * 3.1) > 0.6)
     j["chin"] = j["neck"] + _v(-sway * 0.6, -0.12, 0.13)
@@ -96,7 +104,7 @@ def pose_run(t, phase, lean=0.5, stride=1.0, lift=1.0, arm=1.0):
         j[f"elbow_{side}"], j[f"wrist_{side}"] = el, wr
         _hand(j, side, wr, _n(d2 + _v(0, -0.2, 0.1)), curl=0.35 + 0.3 * math.sin(ph))
     j["jaw"] = 0.85
-    return j
+    return _add_jaw(j)
 
 
 def pose_walk(t, phase):
@@ -123,7 +131,7 @@ def pose_kneel(t, reveal):
     j["spine"] = j["pelvis"] + _v(0, math.cos(hunch * 0.7), math.sin(hunch * 0.7)) * 0.32 + _v(0, sob, 0)
     j["chest"] = j["spine"] + _v(0, math.cos(hunch), math.sin(hunch)) * 0.38 + _v(0, sob, 0)
     for side, sx in (("l", -1), ("r", 1)):
-        j[f"shoulder_{side}"] = j["chest"] + _v(0.21 * sx, -0.04 + sob, 0)
+        j[f"shoulder_{side}"] = j["chest"] + _v(0.245 * sx, -0.04 + sob, 0)
     j["neck"] = j["chest"] + _v(0, math.cos(hunch + 0.6), math.sin(hunch + 0.6)) * 0.17
     j["chin"] = j["neck"] + _v(0, -0.06 * (1 - reveal) - 0.1 * reveal, 0.12)
     tilt = lerp(1.1, -0.15, reveal)
@@ -134,8 +142,8 @@ def pose_kneel(t, reveal):
         sh = j[f"shoulder_{side}"]
         el_c = sh + _v(0.22 * sx, -0.38, 0.22)
         wr_c = face + _v(0.07 * sx, -0.12, 0.02)
-        el_r = sh + _v(0.5 * sx, -0.25, 0.1)
-        wr_r = sh + _v(0.95 * sx, -0.55, 0.25)
+        el_r = sh + _v(0.32 * sx, -0.48, 0.12)
+        wr_r = sh + _v(0.62 * sx, -0.98, 0.25)
         el = el_c * (1 - reveal) + el_r * reveal
         wr = wr_c * (1 - reveal) + wr_r * reveal
         j[f"elbow_{side}"], j[f"wrist_{side}"] = el, wr
@@ -143,7 +151,7 @@ def pose_kneel(t, reveal):
              + _n(wr - el + _v(0, -0.3, 0)) * reveal)
         _hand(j, side, wr, d, curl=0.15 + 0.6 * reveal, spread=0.3 + 0.5 * reveal, length=0.16 + 0.08 * reveal)
     j["jaw"] = 0.1 + 0.8 * reveal
-    return j
+    return _add_jaw(j)
 
 
 def pose_stand(t):
@@ -152,13 +160,13 @@ def pose_stand(t):
     j["pelvis"] = _v(sway, 1.22, 0)
     for side, sx in (("l", -1), ("r", 1)):
         j[f"hip_{side}"] = _v(0.12 * sx + sway, 1.2, 0)
-        j[f"knee_{side}"] = _v(0.15 * sx, 0.64, 0.1)
-        j[f"ankle_{side}"] = _v(0.14 * sx, 0.07, 0.0)
-        j[f"toe_{side}"] = _v(0.16 * sx, 0.03, 0.2)
+        j[f"knee_{side}"] = _v(0.2 * sx, 0.64, 0.1)
+        j[f"ankle_{side}"] = _v(0.25 * sx, 0.07, 0.0)
+        j[f"toe_{side}"] = _v(0.3 * sx, 0.03, 0.18)
     j["spine"] = j["pelvis"] + _v(0, 0.31, 0.06)
     j["chest"] = j["spine"] + _v(0, 0.34, 0.16)
     for side, sx in (("l", -1), ("r", 1)):
-        j[f"shoulder_{side}"] = j["chest"] + _v(0.21 * sx, -0.06, -0.02)
+        j[f"shoulder_{side}"] = j["chest"] + _v(0.245 * sx, -0.06, -0.02)
     j["neck"] = j["chest"] + _v(0, 0.12, 0.13)
     twitch = 0.0
     k = math.sin(t * 2.7) + math.sin(t * 5.3)
@@ -169,12 +177,12 @@ def pose_stand(t):
     for side, sx in (("l", -1), ("r", 1)):
         sh = j[f"shoulder_{side}"]
         sw = 0.04 * math.sin(t * 1.1 + sx)
-        el = sh + _v(0.1 * sx, -0.56, 0.08 + sw)
-        wr = el + _v(0.04 * sx, -0.56, 0.05 + sw)
+        el = sh + _v(0.2 * sx, -0.54, 0.06 + sw)
+        wr = el + _v(0.17 * sx, -0.53, 0.04 + sw)
         j[f"elbow_{side}"], j[f"wrist_{side}"] = el, wr
-        _hand(j, side, wr, _v(0.02 * sx, -1, 0.1), curl=0.4 + 0.2 * math.sin(t * 3 + sx), spread=0.3)
-    j["jaw"] = 0.25
-    return j
+        _hand(j, side, wr, _v(0.25 * sx, -1, 0.1), curl=0.4 + 0.2 * math.sin(t * 3 + sx), spread=0.45, length=0.27)
+    j["jaw"] = 0.6
+    return _add_jaw(j)
 
 
 def lerp(a, b, k):
@@ -183,19 +191,20 @@ def lerp(a, b, k):
 
 # ------------------------------------------------------------------ segmente
 def segments():
-    S = [("pelvis", "spine", 0.12, 0.095, "skin"), ("spine", "chest", 0.095, 0.15, "torso"),
-         ("hip_l", "hip_r", 0.085, 0.085, "skin"),
-         ("shoulder_l", "shoulder_r", 0.055, 0.055, "skin"),
+    S = [("pelvis", "spine", 0.1, 0.06, "belly"), ("spine", "ribs", 0.06, 0.13, "belly"),
+         ("ribs", "chest", 0.15, 0.19, "torso"),
+         ("hip_l", "hip_r", 0.068, 0.068, "skin"),
+         ("shoulder_l", "shoulder_r", 0.042, 0.042, "skin"),
          ("chest", "neck", 0.08, 0.045, "skin"), ("neck", "chin", 0.045, 0.065, "skin"),
-         ("chin", "crown", 0.085, 0.115, "head")]
+         ("chin", "crown", 0.084, 0.088, "head"), ("jawtip", "chin", 0.05, 0.076, "jaw")]
     for s in ("l", "r"):
-        S += [(f"hip_{s}", f"knee_{s}", 0.072, 0.048, "skin"), (f"knee_{s}", f"knee_{s}", 0.056, 0.056, "skin"),
+        S += [(f"hip_{s}", f"knee_{s}", 0.062, 0.046, "skin"), (f"knee_{s}", f"knee_{s}", 0.056, 0.056, "knee"),
               (f"knee_{s}", f"ankle_{s}", 0.048, 0.03, "skin"), (f"ankle_{s}", f"toe_{s}", 0.034, 0.02, "skin"),
               (f"shoulder_{s}", f"elbow_{s}", 0.04, 0.028, "skin"), (f"elbow_{s}", f"elbow_{s}", 0.034, 0.034, "skin"),
-              (f"elbow_{s}", f"wrist_{s}", 0.028, 0.02, "skin"), (f"wrist_{s}", f"knuckle_{s}", 0.03, 0.028, "skin")]
+              (f"elbow_{s}", f"wrist_{s}", 0.028, 0.02, "skin"), (f"wrist_{s}", f"knuckle_{s}", 0.032, 0.03, "hand")]
         for i in range(4):
-            S += [(f"fb{i}_{s}", f"fm{i}_{s}", 0.011, 0.009, "skin"), (f"fm{i}_{s}", f"ft{i}_{s}", 0.009, 0.007, "skin"),
-                  (f"ft{i}_{s}", f"fc{i}_{s}", 0.006, 0.001, "claw")]
+            S += [(f"fb{i}_{s}", f"fm{i}_{s}", 0.011, 0.009, "hand"), (f"fm{i}_{s}", f"ft{i}_{s}", 0.009, 0.0075, "hand"),
+                  (f"ft{i}_{s}", f"fc{i}_{s}", 0.0075, 0.0055, "tip")]
     return S
 
 
@@ -206,12 +215,12 @@ def hand_segments(side="r"):
     """Nahaufnahme-Hand: Unterarm, flaechige Handflaeche, Fingerglieder mit Klauen."""
     S = [(f"elbow_{side}", f"wrist_{side}", 0.034, 0.028, "skin"),
          (f"fb0_{side}", f"fb3_{side}", 0.017, 0.017, "skin"),
-         (f"wrist_{side}", f"knuckle_{side}", 0.042, 0.036, "skin")]
+         (f"wrist_{side}", f"knuckle_{side}", 0.042, 0.036, "hand")]
     for i in range(4):
-        S += [(f"wrist_{side}", f"fb{i}_{side}", 0.03, 0.019, "skin"),
-              (f"fb{i}_{side}", f"fm{i}_{side}", 0.0115, 0.0095, "skin"),
-              (f"fm{i}_{side}", f"ft{i}_{side}", 0.0095, 0.0075, "skin"),
-              (f"ft{i}_{side}", f"fc{i}_{side}", 0.0065, 0.001, "claw")]
+        S += [(f"wrist_{side}", f"fb{i}_{side}", 0.03, 0.019, "hand"),
+              (f"fb{i}_{side}", f"fm{i}_{side}", 0.0115, 0.0095, "hand"),
+              (f"fm{i}_{side}", f"ft{i}_{side}", 0.0095, 0.008, "hand"),
+              (f"ft{i}_{side}", f"fc{i}_{side}", 0.008, 0.006, "tip")]
     return S
 
 
@@ -256,8 +265,9 @@ def rasterize(img_shape, cam, jw, project, rot, F, light, tex, fine, t=0.0, segs
     ppm = F / pel[2] if pel else 200.0
     ox, oy = (pel[0], pel[1]) if pel else (0, 0)
     jaw = jw.get("jaw", 0.3)
-    skin_lit = np.array([0.88, 0.87, 0.84], np.float32)
-    skin_sh = np.array([0.24, 0.22, 0.23], np.float32)
+    skin_lit = np.array([0.85, 0.83, 0.84], np.float32)
+    skin_sh = np.array([0.26, 0.22, 0.27], np.float32)
+    blood_c = np.array([0.42, 0.04, 0.05], np.float32)
     for a, b, ra, rb, mat in (segs or SEGS):
         A, B = pp.get(a), pp.get(b)
         if A is None or B is None:
@@ -307,40 +317,53 @@ def rasterize(img_shape, cam, jw, project, rot, F, light, tex, fine, t=0.0, segs
         tx = tex(u, v)
         fn = fine(u * 3.0, v * 3.0)
         alb = 0.78 + 0.45 * (tx - 0.5)
-        vein = np.clip(1 - np.abs(fn - 0.5) / 0.018, 0, 1) * 0.35
+        vein = np.clip(1 - np.abs(fn - 0.5) / 0.02, 0, 1) * 0.5
         base = skin_sh[None, None] + (skin_lit - skin_sh)[None, None] * diff[..., None]
         rgb = base * alb[..., None]
-        rgb = rgb * (1 - vein[..., None] * np.array([0.25, 0.15, 0.0], np.float32))
+        rgb = rgb * (1 - vein[..., None] * np.array([0.12, 0.32, 0.04], np.float32))   # violette Adern
         spec_k = 0.18
         if mat == "torso":
             qq = (dx * aby - dy * abx) / max(math.sqrt(l2), 1e-3) / np.maximum(r, 1e-3)
             ribs = np.clip(np.cos((h + 0.07 * qq * qq) * 2 * math.pi * 6.0), 0, 1) ** 4 * ((h > 0.3) & (h < 0.92)) * (1 - s) ** 0.7 * (np.abs(qq) > 0.12)
             stern = np.exp(-(((dx * aby - dy * abx) / max(math.sqrt(l2), 1e-3)) / max((sra + srb) * 0.06, 0.3)) ** 2)
-            rgb *= (1 - 0.3 * ribs * diff - 0.12 * stern * (h > 0.4))[..., None]
-            belly = (h < 0.25) * (1 - s)
-            rgb *= (1 - 0.25 * belly)[..., None]
+            rgb *= (1 - 0.48 * ribs * (0.4 + 0.6 * diff) - 0.15 * stern * (h > 0.4))[..., None]
+            under = np.exp(-((h - 0.22) / 0.07) ** 2) * (1 - s)                  # Rippenbogen
+            rgb *= (1 - 0.35 * under)[..., None]
+        elif mat == "belly":
+            rgb *= (0.78 + 0.22 * s)[..., None]                                   # eingefallener Bauch
         elif mat == "head" and light.get("face", True):
             q = (dx * aby - dy * abx) / max(math.sqrt(l2), 1e-3) / np.maximum(r, 1e-3)
-            for ex in (-0.4, 0.4):
-                e = ((q - ex * 0.9) / 0.12) ** 2 + ((h - 0.7) / 0.06) ** 2
-                socket = np.clip(1.6 - e * 0.45, 0, 1)
-                rgb *= (1 - 0.5 * socket)[..., None]
-                rgb = np.where((e < 1)[..., None], np.array([0.03, 0.03, 0.03], np.float32), rgb)
-            mh = 0.08 + 0.48 * jaw
-            me = (q / (0.3 + 0.12 * jaw)) ** 2 + ((h - (0.0 + mh / 2)) / (mh / 2)) ** 2
-            inner = np.clip(1 - me, 0, 1)
-            mouth = me < 1
-            mc = np.array([0.10, 0.015, 0.015], np.float32) * (1 - inner[..., None] ** 0.5 * 0.95)
-            rgb = np.where(mouth[..., None], mc, rgb)
-            lip = (me > 1) & (me < 1.35)
-            rgb = np.where(lip[..., None], rgb * 0.6, rgb)
-            nose = (np.abs(np.abs(q) - 0.07) < 0.035) & (np.abs(h - mh - 0.06) < 0.025)
-            rgb = np.where(nose[..., None], rgb * 0.35, rgb)
-        elif mat == "claw":
-            clawc = np.array([0.10, 0.08, 0.07], np.float32) * (0.4 + 0.6 * diff[..., None])
-            blood = np.array([0.30, 0.03, 0.02], np.float32) * (0.4 + 0.6 * diff[..., None])
-            rgb = np.where(((h < 0.35) & (fn > 0.5))[..., None], blood, clawc)
-            spec_k = 0.6
+            wr_ = np.clip(np.cos(h * 2 * math.pi * 13), 0, 1) ** 3 * (h > 0.74) * (1 - s)   # Stirnfalten
+            rgb *= (1 - 0.22 * wr_)[..., None]
+            for ex in (-0.36, 0.36):
+                e = ((q - ex) / 0.105) ** 2 + ((h - 0.6) / 0.042) ** 2
+                rgb *= (1 - 0.7 * np.clip(2.2 - e * 0.28, 0, 1))[..., None]       # tiefe, dunkle Augenhoehlen
+                eye = np.array([0.74, 0.74, 0.77], np.float32) * (0.6 + 0.4 * diff[..., None])
+                rgb = np.where((e < 1)[..., None], eye * (0.85 + 0.15 * (1 - e[..., None])), rgb)  # milchig, ohne Pupille
+            mw = 0.18 + 0.2 * jaw
+            top = 0.18 + 0.25 * jaw
+            mouth = (h < top) & (np.abs(q) < mw * np.sqrt(np.clip(1 - (h / top) ** 2, 0, 1)) + 0.06 * (h < top * 0.4))
+            rgb = np.where(mouth[..., None], np.array([0.05, 0.01, 0.015], np.float32), rgb)
+            fold = np.exp(-((np.abs(q) - mw - 0.12) / 0.05) ** 2) * (h < top + 0.1)     # gedehnte Falten neben dem Maul
+            rgb *= (1 - 0.3 * fold)[..., None]
+            nose = (np.abs(np.abs(q) - 0.06) < 0.03) & (np.abs(h - top - 0.06) < 0.022)
+            rgb = np.where(nose[..., None], rgb * 0.3, rgb)
+        elif mat == "jaw":
+            q = (dx * aby - dy * abx) / max(math.sqrt(l2), 1e-3) / np.maximum(r, 1e-3)
+            if light.get("face", True):
+                mw = 0.5 + 0.2 * jaw
+                inner = (np.abs(q) < mw) & (h > 0.12)
+                depth_k = np.clip(1 - np.abs(q) / mw, 0, 1)
+                mc = np.array([0.09, 0.015, 0.02], np.float32) * (1 - 0.85 * depth_k[..., None])
+                rgb = np.where(inner[..., None], mc, rgb)
+                lip = (np.abs(q) >= mw) & (np.abs(q) < mw + 0.18)
+                rgb = np.where(lip[..., None], rgb * 0.62, rgb)
+            rgb *= (1 - 0.25 * np.clip(1 - h / 0.2, 0, 1))[..., None]
+        elif mat in ("hand", "tip", "knee"):
+            amt = {"hand": 0.55, "tip": 0.9, "knee": 0.35}[mat]
+            bl = np.clip((tx - 0.5) * 4 + amt * 2 - 0.6, 0, 1) * amt
+            rgb = rgb * (1 - bl[..., None]) + blood_c * (0.35 + 0.65 * diff[..., None]) * bl[..., None]
+            spec_k = 0.35 if mat != "knee" else 0.18
         spec = np.clip(nx * half[0] + ny * half[1] + nz * half[2], 0, 1) ** 28 * spec_k
         rgb = rgb * light["key"] + light.get("ambient", 0.03) * rgb
         rgb = rgb + spec[..., None] * light["key"]
