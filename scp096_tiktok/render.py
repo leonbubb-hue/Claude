@@ -302,7 +302,7 @@ def draw_creature(img, cam, pose_fn, pos, yaw, light, t, blur=0.0, shadow=0.5, s
     acc_c = np.zeros_like(img)
     acc_a = np.zeros(img.shape[:2], np.float32)
     for i, tt in enumerate(times):
-        jw = CR.to_world(pose_fn(tt), pos(tt), yaw)
+        jw = CR.to_world(pose_fn(tt), pos(tt), yaw(tt) if callable(yaw) else yaw)
         if i == 0 and shadow:
             CR.contact_shadow(img, cam, jw, project, shadow)
         col, al, _ = CR.rasterize(img.shape, cam, jw, project, rot, F, light, _tex, _fine, tt, segs)
@@ -318,85 +318,6 @@ def corridor_light_at(z, t, chaos):
     k = round(z / 6)
     fl = float(flicker(k, t, chaos))
     return fl * (0.35 + 0.65 * math.exp(-((z - 6 * k) ** 2) / 6.0))
-
-
-@lru_cache(None)
-def face_base():
-    """Das Gesicht als schattiertes Relief - wird beim Zeigen stark zerstoert."""
-    hw, hh = OW // 2, OH // 2
-    y, x = np.mgrid[0:hh, 0:hw].astype(np.float32)
-    X = (x - hw / 2) / (hw / 2)
-    Y = (y - hh * 0.42) / (hw / 2)
-    def g(cx, cy, sx, sy):
-        return np.exp(-(((X - cx) / sx) ** 2 + ((Y - cy) / sy) ** 2))
-    head = np.clip(1 - (X / 0.86) ** 2 - ((Y - 0.35) / 2.1) ** 2, 0, 1)
-    hgt = np.sqrt(head)
-    hgt += 0.07 * (g(-0.33, -0.62, 0.3, 0.08) + g(0.33, -0.62, 0.3, 0.08))      # Brauenwulst
-    hgt -= 0.16 * (g(-0.33, -0.45, 0.16, 0.13) + g(0.33, -0.45, 0.16, 0.13))    # Augenhoehlen
-    hgt += 0.08 * (g(-0.5, -0.05, 0.16, 0.25) + g(0.5, -0.05, 0.16, 0.25))      # Wangenknochen
-    hgt -= 0.06 * (g(-0.42, 0.25, 0.12, 0.4) + g(0.42, 0.25, 0.12, 0.4))        # eingefallene Wangen
-    hgt += 0.05 * g(0, -0.2, 0.06, 0.18)                                        # Nasenruecken
-    mx, my = X / 0.42, (Y - 0.95) / 0.95
-    mr = np.sqrt(mx ** 2 + my ** 2)
-    ang = np.arctan2(my, mx)
-    hgt += 0.015 * np.sin(ang * 34) * np.exp(-((mr - 1.15) / 0.15) ** 2)       # gedehnte Hautfalten
-    hgt += 0.05 * np.exp(-((mr - 1.05) / 0.08) ** 2)                            # Lippenwulst
-    gy, gx = np.gradient(hgt * 60)
-    nrm = np.stack([-gx, -gy, np.ones_like(gx)], -1)
-    nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
-    L = np.array([-0.35, -0.55, 0.76]); L /= np.linalg.norm(L)
-    diff = np.clip(nrm @ L, 0, 1)
-    Hv = (L + np.array([0, 0, 1.0])); Hv /= np.linalg.norm(Hv)
-    spec = np.clip(nrm @ Hv, 0, 1) ** 30 * 0.25
-    tex = np.asarray(Image.fromarray((CONC * 255).astype(np.uint8)).resize((hw, hh))).astype(np.float32) / 255
-    fn = np.asarray(Image.fromarray((FINE * 255).astype(np.uint8)).resize((hw, hh))).astype(np.float32) / 255
-    alb = np.ones((hh, hw, 3), np.float32) * np.array([0.80, 0.76, 0.70])
-    alb *= (0.8 + 0.35 * (tex - 0.5))[..., None]
-    vein = np.clip(1 - np.abs(fn - 0.5) / 0.012, 0, 1) * 0.4
-    alb *= (1 - vein[..., None] * np.array([0.35, 0.2, 0.0]))
-    col = alb * (0.08 + 0.95 * diff[..., None]) + spec[..., None]
-    sss = np.clip(1 - diff, 0, 1)[..., None] * np.array([0.08, 0.02, 0.02])     # rotliche Schatten
-    col += sss * (head > 0)[..., None]
-    # Augen: kleine, glaenzend schwarze Kugeln
-    for ex in (-0.33, 0.33):
-        e = ((X - ex) / 0.07) ** 2 + ((Y + 0.45) / 0.06) ** 2
-        col = np.where((e < 1)[..., None], 0.02 + 0.5 * (np.clip(1 - ((X - ex + 0.02) ** 2 + (Y + 0.47) ** 2) / 0.0004, 0, 1))[..., None], col)
-    # Nasenloecher
-    for nx in (-0.06, 0.06):
-        e = ((X - nx) / 0.035) ** 2 + ((Y + 0.02) / 0.02) ** 2
-        col = np.where((e < 1)[..., None], col * 0.15, col)
-    # Maul: tief, mit Zaehnen am Oberkiefer
-    inside = mr < 1.0
-    depth = np.clip(1 - mr, 0, 1)
-    mcol = np.array([0.16, 0.03, 0.03]) * (1 - depth[..., None] ** 0.4)
-    col = np.where(inside[..., None], mcol, col)
-    tooth = inside & (my < -0.6) & (np.sin(mx * 30) > 0.2) & (my > -0.98 + 0.25 * np.abs(np.sin(mx * 15)))
-    col = np.where(tooth[..., None], np.array([0.62, 0.57, 0.45]) * (0.6 + 0.4 * diff[..., None]), col)
-    col = col * (head > 0)[..., None] + 0.015 * (head <= 0)[..., None]
-    img = Image.fromarray((np.clip(col, 0, 1) * 255).astype(np.uint8)).resize((OW, OH), Image.BICUBIC)
-    return np.asarray(img).astype(np.float32) / 255
-
-
-def face_frame(seed):
-    r = np.random.default_rng(seed)
-    f = face_base()
-    yy = np.arange(OH)[:, None]
-    xx = np.arange(OW)[None, :]
-    amp = r.uniform(25, 75)
-    sx = (xx + amp * np.sin(yy / r.uniform(25, 70) + r.uniform(0, 6)) + r.uniform(-60, 60)).astype(int) % OW
-    sy = (yy + 0.4 * amp * np.sin(xx / r.uniform(40, 90))).astype(int) % OH
-    g = f[sy, sx]
-    out = g.copy()
-    off = int(r.uniform(15, 45))
-    out[..., 0] = np.roll(g[..., 0], off, 1)
-    out[..., 2] = np.roll(g[..., 2], -off, 1)
-    for _ in range(12):  # Block-Verschiebungen
-        y0 = int(r.uniform(0, OH - 80))
-        hh = int(r.uniform(10, 160))
-        out[y0:y0 + hh] = np.roll(out[y0:y0 + hh], int(r.uniform(-200, 200)), 1)
-    out = np.clip((out - 0.25) * 1.7 + 0.15, 0, 1)
-    out *= 0.6 + 0.4 * r.random((OH // 8, OW // 8)).repeat(8, 0).repeat(8, 1)[..., None]
-    return out
 
 
 # ============================================================ polaroid (Szene 1)
@@ -689,15 +610,11 @@ RULES = {
     3: dict(lines=[("RULE 3:", RED), ("If you hear", WHITE), ("him crying,", WHITE), ("RUN.", RED)], emoji="🏃"),
     4: dict(lines=[("RULE 4:", RED), ("Hiding is", WHITE), ("pointless.", WHITE)], emoji="🚪"),
     5: dict(lines=[("RULE 5:", RED), ("There is", WHITE), ("no escape.", WHITE)], emoji="💀"),
-    "lost": dict(lines=[("SIGNAL LOST", RED), ("CAM-07 // END OF RECORDING", WHITE)], head_size=70, size=36),
-    "q": dict(lines=[("Did YOU see", WHITE), ("his face?", WHITE)], head=False, size=84),
-    "follow": dict(lines=[("Follow for more.", RED)], head=False, size=66),
 }
 # (key, start, ende, y-position in Ausgabepixeln)
 TEXT_TIMELINE = [
     (1, 4.2, 9.75, 700), (2, 11.0, 15.3, 640), (3, 23.0, 29.5, 640),
-    (4, 40.8, 46.6, 640), (5, 50.3, 54.8, 760),
-    ("lost", 55.0, 57.8, 720), ("q", 58.0, 65.0, 760), ("follow", 61.5, 65.0, 1000),
+    (4, 40.8, 46.6, 640), (5, 51.2, 55.6, 1280),
 ]
 
 
@@ -751,8 +668,6 @@ def hud_fonts():
 
 
 def draw_hud(out, t):
-    if t >= 49.9:
-        return
     f1, f2 = hud_fonts()
     im = Image.new("RGBA", (OW, 140), (0, 0, 0, 0))
     d = ImageDraw.Draw(im)
@@ -948,9 +863,6 @@ def scene_room(t):
                               dict(key_dir=(0.0, 0.35, -1.0), key=0.35 * beyond, ambient=0.03, rim=1.1 * beyond,
                                    rim_col=(0.75, 0.82, 0.9), tint=(1.0, 0.88, 0.88)), t, shadow=0.3)
             elif vis:
-                def lunge_pos(tt):
-                    k = sm((tt - 47.6) / 0.7)
-                    return (lerp(0.0, 1.45, k), 0.0, lerp(0.08, 4.2, k))
                 draw_creature(img, cam, lambda tt: CR.pose_run(tt, tt * 3.0, lean=0.65), lunge_pos, 0.33,
                               dict(key_dir=(-0.4, 0.6, 0.5), key=0.75, ambient=0.03, rim=0.5 * beyond,
                                    tint=(1.0, 0.62, 0.6)), t, blur=1 / 60, shadow=0.4)
@@ -1030,54 +942,213 @@ def frame(i):
     return (np.clip(out, 0, 1) * 255).astype(np.uint8)
 
 
-FACE_FRAMES = {49.30: 1, 49.33: 2, 49.43: 3, 49.47: 3, 49.57: 4, 49.60: 5, 49.70: 6, 49.80: 7}
+LUNGE_END = 48.3
+FLOOR_T = 49.1                       # Kamera schlaegt auf dem Boden auf
+FLOOR_CAM = dict(pos=(1.45, 0.07, 4.75), yaw=math.atan2(-1.45, -4.75) + 0.1, pitch=-0.34, roll=-0.3)
+_VIEW = np.array([math.sin(FLOOR_CAM["yaw"]), 0.0, math.cos(FLOOR_CAM["yaw"])])
+C_STAND = tuple(np.array(FLOOR_CAM["pos"]) * [1, 0, 1] + _VIEW * 2.4)    # steht in voller Groesse da
+C_CROUCH = tuple(np.array(FLOOR_CAM["pos"]) * [1, 0, 1] + _VIEW * 1.5)   # hockt direkt vor der Linse
+C_DOOR = (0.1, 0.0, 0.4)
+YAW_FACE = math.atan2(-_VIEW[0], -_VIEW[2])
+YAW_DOOR = math.atan2(C_DOOR[0] - C_CROUCH[0], C_DOOR[2] - C_CROUCH[2])
+STEP_T0, STEP_T1 = 50.2, 51.3        # zwei Schritte auf die Kamera zu
+WALK_T0, WALK_T1 = 55.6, 58.6        # geht zur Tuer
+GONE_T = WALK_T1                     # Licht flackert -> weg
+
+
+def lunge_pos(tt):
+    k = sm((tt - 47.6) / 0.7)
+    return (lerp(0.0, 1.45, k), 0.0, lerp(0.08, 4.2, k))
+
+
+def floor_pose(tt):
+    stand = CR.pose_stand(tt)
+    if tt < STEP_T0:
+        return stand
+    if tt < STEP_T1:
+        walk = CR.pose_walk(tt, (tt - STEP_T0) * 0.95)
+        w = sm((tt - STEP_T0) / 0.25) * (1 - sm((tt - STEP_T1 + 0.25) / 0.25))
+        return CR.blend(stand, walk, w)
+    kneel = CR.pose_kneel(tt, 0.0)
+    if tt < 52.2:
+        return CR.blend(stand, kneel, sm((tt - STEP_T1) / 0.9))
+    if tt < 54.6:
+        return kneel
+    if tt < 55.5:
+        return CR.blend(kneel, stand, sm((tt - 54.6) / 0.9))
+    walk = CR.pose_walk(tt, (tt - WALK_T0) * 0.95)
+    return CR.blend(stand, walk, sm((tt - WALK_T0) / 0.4))
+
+
+def floor_pos(tt):
+    a, c, d = np.array(C_STAND), np.array(C_CROUCH), np.array(C_DOOR)
+    if tt < WALK_T0:
+        return tuple(a + (c - a) * np.clip((tt - STEP_T0) / (STEP_T1 - STEP_T0), 0, 1))
+    return tuple(c + (d - c) * np.clip((tt - WALK_T0) / (WALK_T1 - WALK_T0), 0, 1))
+
+
+def floor_yaw(tt):
+    return lerp(YAW_FACE, YAW_DOOR, sm((tt - 55.3) / 0.6))
+
+
+def red_end(t):
+    if t < GONE_T:
+        return 0.75 + 0.25 * float(flicker(5, t, 0.2))
+    if t < GONE_T + 0.85:
+        return 0.8 * float(flicker(7, t, 0.6))
+    return 0.0
+
+
+def beyond_end(t):
+    if t < GONE_T:
+        return 0.55 + 0.35 * float(flicker(3, t, 0.2))
+    if t < GONE_T + 0.25:
+        return 0.02
+    if t < 61.5:
+        return 0.5 * float(flicker(3, t, 0.3))
+    return lerp(0.5, 0.16, sm((t - 61.5) / 1.0))
+
+
+def tumble_cam(t):
+    """Kamera wird weggeschlagen, ueberschlaegt sich und faellt auf den Boden."""
+    c0, c1 = room_cam(34.99), FLOOR_CAM
+    u = np.clip((t - 48.45) / (FLOOR_T - 48.45), 0, 1)
+    k = sm(u)
+    p0, p1 = np.array(c0["pos"]), np.array(c1["pos"])
+    pos = p0 + (p1 - p0) * k
+    pos[1] = lerp(p0[1], p1[1], u * u)
+    return dict(pos=tuple(pos),
+                yaw=lerp(c0["yaw"], c1["yaw"], k) + 2.4 * math.sin(math.pi * k),
+                pitch=lerp(c0["pitch"], c1["pitch"], k) + 0.9 * math.sin(2 * math.pi * k),
+                roll=lerp(c0["roll"], c1["roll"], k) + 0.8 * math.sin(1.5 * math.pi * k))
+
+
+def floor_cam(t):
+    cam = dict(FLOOR_CAM)
+    e = math.exp(-(t - FLOOR_T) * 9)            # Aufprall-Rueckfedern
+    cam["roll"] += 0.12 * e * math.sin((t - FLOOR_T) * 40)
+    cam["pitch"] += 0.06 * e * math.sin((t - FLOOR_T) * 33)
+    return cam
+
+
+@lru_cache(None)
+def lens_crack():
+    """Gesprungene Linse nach dem Aufprall (RGBA, Ausgabeaufloesung)."""
+    im = Image.new("RGBA", (OW, OH), (0, 0, 0, 0))
+    d = ImageDraw.Draw(im)
+    r = np.random.default_rng(12)
+    cx, cy = 260, 1460
+    for i in range(11):
+        a = i / 11 * 2 * math.pi + r.uniform(-0.2, 0.2)
+        x, y = cx, cy
+        for _ in range(int(r.integers(4, 9))):
+            a += r.uniform(-0.35, 0.35)
+            step = r.uniform(60, 180)
+            nx, ny = x + math.cos(a) * step, y + math.sin(a) * step
+            d.line([(x, y), (nx, ny)], fill=(230, 235, 240, 120), width=2)
+            x, y = nx, ny
+    for rr in (40, 95):
+        d.ellipse([cx - rr, cy - rr, cx + rr, cy + rr], outline=(230, 235, 240, 70), width=2)
+    im = im.filter(ImageFilter.GaussianBlur(0.8))
+    return np.asarray(im).astype(np.float32) / 255
+
+
+@lru_cache(None)
+def polaroid_back():
+    im = Image.new("RGBA", (470, 560), (200, 196, 186, 255))
+    return np.asarray(im).astype(np.float32) / 255
+
+
+def polaroid_fall(img, t):
+    """Das Polaroid flattert vor die Linse und landet genau so im Bild wie in Frame 1 (Loop)."""
+    u = (t - 62.3) / 2.0
+    c = np.array([W / 2, H / 2 + 40.0])
+    pa, pb = project(FLOOR_CAM, (0.9, 1.0, 4.0)), project(FLOOR_CAM, (0.9, 0.4, 4.0))
+    g = np.array([pb[0] - pa[0], pb[1] - pa[1]])
+    g /= np.linalg.norm(g)
+    perp = np.array([-g[1], g[0]])
+    ang_g = -math.atan2(g[0], g[1])
+    if u < 1.0:
+        pos = c + g * (-640 + 660 * u) + perp * 70 * math.sin(u * 7)
+        scale = 0.36
+        flip = math.cos(u * 9.0)
+        ang = ang_g + 0.45 * math.sin(u * 6)
+        light = 0.4
+    else:
+        k = sm((t - 64.3) / 0.7)
+        p_end = c + g * 20
+        pos = p_end + (c - p_end) * k
+        scale = lerp(0.36, 0.78, k ** 1.6)
+        flip = lerp(math.cos(9.0), 1.0, sm(k * 3))
+        ang = lerp(ang_g, -0.04, k)
+        light = lerp(0.4, 0.95, k)
+    src = polaroid() if flip >= 0 else polaroid_back()
+    pil = Image.fromarray((src * 255).astype(np.uint8), "RGBA")
+    w = max(2, int(470 * scale * max(abs(flip), 0.06)))
+    h = max(2, int(560 * scale))
+    pil = pil.resize((w, h), Image.BILINEAR).rotate(math.degrees(ang), expand=True, resample=Image.BILINEAR)
+    a = np.asarray(pil).astype(np.float32) / 255
+    hh, ww = a.shape[:2]
+    x0, y0 = int(pos[0] - ww / 2), int(pos[1] - hh / 2)
+    ix0, iy0, ix1, iy1 = max(0, x0), max(0, y0), min(W, x0 + ww), min(H, y0 + hh)
+    if ix1 <= ix0 or iy1 <= iy0:
+        return img
+    s_ = a[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0]
+    al = s_[..., 3:4]
+    col = s_[..., :3] * light * np.array([1.0, 0.97, 0.9], np.float32) * VIGN[iy0:iy1, ix0:ix1, None]
+    img[iy0:iy1, ix0:ix1] = img[iy0:iy1, ix0:ix1] * (1 - al) + col * al
+    return img
 
 
 def scene_end(t):
-    """48.3 s+: Griff, Hochreissen, Gesicht, Rauschen, Outro."""
-    if t < 49.3:
-        # Raum, Kamera wird hochgerissen; Hand fuellt das Bild
-        cam = room_cam(34.99)
-        lift = sm((t - 48.75) / 0.5)
-        p = np.array(cam["pos"])
-        cam["pos"] = tuple(p + np.array([-0.6, 1.9, -0.8]) * lift)
-        cam["pitch"] += -0.9 * lift + 0.15 * wobble(t * 12, 71)
-        cam["roll"] += 1.1 * lift + 0.1 * wobble(t * 12, 72)
-        cam["yaw"] += 0.6 * lift
+    """48.3 s+: Klaue schlaegt die Kamera weg, Bodenperspektive, Stille, Polaroid-Loop."""
+    if t < FLOOR_T:
+        cam = room_cam(34.99) if t < 48.45 else tumble_cam(t)
         sc = room_scene(t, 0, gap_mod_factory(t), blown=True, beyond=0.6, red=0.8)
         img, _ = render_box(cam, sc, t)
-        img = post(img, t, tint=(1.0, 0.9, 0.9), gain=1.6, ab=3)
-        img = tracking_glitch(img, t, 0.6)
+        if t < 48.45:
+            draw_creature(img, cam, lambda tt: CR.pose_run(tt, tt * 3.0, lean=0.65), lunge_pos, 0.33,
+                          dict(key_dir=(-0.4, 0.6, 0.5), key=0.75, ambient=0.03, rim=0.3,
+                               tint=(1.0, 0.62, 0.6)), min(t, LUNGE_END), shadow=0.4)
+        img = post(img, t, tint=(1.0, 0.9, 0.9), gain=1.5, ab=3)
+        img = tracking_glitch(img, t, 0.7 if t >= 48.45 else 0.3)
         out = upscale(img)
-        k = sm((t - 48.3) / 0.45)
-        close = sm((t - 48.68) / 0.32)
-        hcam = dict(pos=(0.0, 0.0, 0.0), yaw=0.0, pitch=0.0, roll=0.25 * wobble(t * 8, 77))
-        himg = np.zeros((H, W, 3), np.float32)
-        col, al, _ = CR.rasterize(himg.shape, hcam, CR.pose_grab(k, close), project, rot, F,
-                                  dict(key_dir=(-0.5, 0.8, -0.4), key=0.9, ambient=0.05, rim=0.25,
-                                       rim_col=(0.9, 0.3, 0.25), tint=(1.0, 0.8, 0.78)),
-                                  _tex, _fine, t, CR.hand_segments("r"))
-        col = post(col, t, gain=1.2, ab=2)
-        hup = upscale(col)
-        aup = np.asarray(Image.fromarray((al * 255).astype(np.uint8)).resize((OW, OH), Image.BILINEAR)).astype(np.float32)[..., None] / 255
-        out = out * (1 - aup) + hup * aup
-        cover = sm((t - 48.98) / 0.22)  # Hand schliesst sich ueber der Linse
-        out = out * (1 - 0.88 * cover) + 0.88 * cover * np.array([0.13, 0.035, 0.03], np.float32)
-        out = shift_rot(out, 40 * wobble(t * 20, 74), 40 * wobble(t * 20, 75), 0.04 * wobble(t * 15, 76))
+        if t < 48.5:  # Klaue schlaegt in die Linse
+            k = sm((t - 48.25) / 0.2)
+            hcam = dict(pos=(0.0, 0.0, 0.0), yaw=0.0, pitch=0.0, roll=0.3 * wobble(t * 8, 77))
+            col, al, _ = CR.rasterize((H, W, 3), hcam, CR.pose_grab(k, 0.15), project, rot, F,
+                                      dict(key_dir=(-0.5, 0.8, -0.4), key=0.9, ambient=0.05, rim=0.25,
+                                           rim_col=(0.9, 0.3, 0.25), tint=(1.0, 0.8, 0.78), face=False),
+                                      _tex, _fine, t, CR.hand_segments("r"))
+            hup = upscale(post(col, t, gain=1.2, ab=2))
+            aup = np.asarray(Image.fromarray((al * 255).astype(np.uint8)).resize((OW, OH), Image.BILINEAR)).astype(np.float32)[..., None] / 255
+            out = out * (1 - aup) + hup * aup
+        if t >= 48.45:
+            out = shift_rot(out, 50 * wobble(t * 20, 74), 50 * wobble(t * 20, 75), 0.05 * wobble(t * 15, 76))
         return out
-    if t < 49.9:
-        key = round(math.floor(t * FPS) / FPS, 2)
-        seed = FACE_FRAMES.get(key)
-        if seed is not None:
-            return face_frame(seed)
-        return static_frame(t, 1.0)
-    # Rauschen bis zum Ende, mit unterschwelligem Gesichts-Frame
-    inten = 1.0 if t < 55 else 0.55
-    out = static_frame(t, inten)
-    if 63.0 <= t < 63.07:
-        out = out * 0.5 + face_frame(9) * 0.5
-    if t >= 55:
-        out *= 0.75
+    # --- Kamera liegt auf dem Boden
+    cam = floor_cam(t)
+    red = red_end(t)
+    beyond = beyond_end(t)
+    sc = room_scene(t, 0, gap_mod_factory(t), blown=True, beyond=beyond, red=red)
+    img, _ = render_box(cam, sc, t)
+    if t < GONE_T:
+        rl = np.array([-2.3, 2.5, 3.2]) - np.array(floor_pos(t))
+        draw_creature(img, cam, floor_pose, floor_pos, floor_yaw,
+                      dict(key_dir=tuple(rl), key=0.2 * red + 0.02, ambient=0.012, rim=1.1 * beyond,
+                           rim_col=(0.72, 0.8, 0.88), tint=(0.85, 0.72, 0.7), face=False), t, shadow=0.5)
+    img = post(img, t, tint=(1.0, 0.92, 0.9), gain=1.4, ab=2)
+    if t < FLOOR_T + 0.25:
+        img = tracking_glitch(img, t, 1.0)
+    else:
+        img = tracking_glitch(img, t, 0.06)
+    if t >= 62.3:
+        img = polaroid_fall(img, t)
+    out = upscale(img)
+    if t < FLOOR_T + 0.07:
+        out = out * 0.4 + static_frame(t, 0.9) * 0.6
+    crack = lens_crack()
+    out = out * (1 - crack[..., 3:4]) + crack[..., :3] * crack[..., 3:4] * (0.25 + 0.3 * red)
     return out
 
 

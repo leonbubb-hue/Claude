@@ -42,28 +42,28 @@ def _hand(j, side, wrist, d, curl, spread=0.55, length=0.24):
 
 
 # ------------------------------------------------------------------ posen
-def pose_run(t, phase, lean=0.5):
+def pose_run(t, phase, lean=0.5, stride=1.0, lift=1.0, arm=1.0):
     p = phase % 1.0
     j = {}
     L1, L2, LF = 0.62, 0.60, 0.20
 
     def leg(ph):
-        a = 0.12 + 0.78 * math.sin(2 * math.pi * ph)
-        kf = 0.3 + 1.45 * max(0.0, math.cos(2 * math.pi * ph)) ** 1.4
+        a = 0.12 * stride + 0.78 * stride * math.sin(2 * math.pi * ph)
+        kf = 0.3 * lift + 1.45 * lift * max(0.0, math.cos(2 * math.pi * ph)) ** 1.4
         b = a - kf
         knee = _v(0, -math.cos(a), math.sin(a)) * L1
         ankle = knee + _v(0, -math.cos(b), math.sin(b)) * L2
-        f = b + 1.25 + 0.35 * math.sin(2 * math.pi * ph)
+        f = b + 1.25 + 0.35 * stride * math.sin(2 * math.pi * ph)
         toe = ankle + _v(0, -math.cos(f), math.sin(f)) * LF
         return knee, ankle, toe
 
     kl, al, tl = leg(p)
     kr, ar, tr = leg(p + 0.5)
     ground = min(al[1], ar[1], tl[1], tr[1])
-    py = -ground + 0.04 + 0.05 * math.cos(4 * math.pi * p)
-    sway = 0.07 * math.sin(2 * math.pi * p)
+    py = -ground + 0.04 + 0.05 * stride * math.cos(4 * math.pi * p)
+    sway = 0.07 * stride * math.sin(2 * math.pi * p)
     pel = _v(sway, py, 0)
-    twist = 0.3 * math.sin(2 * math.pi * p)
+    twist = 0.3 * stride * math.sin(2 * math.pi * p)
     for side, sx, (k, a, to) in (("l", -1, (kl, al, tl)), ("r", 1, (kr, ar, tr))):
         hip = pel + _roty(_v(0.11 * sx, -0.02, 0), -twist * 0.6)
         j[f"hip_{side}"] = hip
@@ -84,12 +84,12 @@ def pose_run(t, phase, lean=0.5):
     j["crown"] = j["chin"] + _n(_v(math.sin(jit) * 0.3 - sway, math.cos(tilt), math.sin(tilt))) * 0.40
     for side, sx, off in (("l", -1, 0.0), ("r", 1, 0.5)):
         ph = 2 * math.pi * (p + off) + 0.35          # Arme gegen die Beine, mit Verzoegerung
-        al_ = -1.15 * math.sin(ph) + 0.25
+        al_ = -1.15 * arm * math.sin(ph) + 0.25 * arm
         ab = 0.2 + 0.1 * math.sin(ph * 2 + sx)
         sh = j[f"shoulder_{side}"]
         d1 = _v(math.sin(ab) * sx, -math.cos(al_) * math.cos(ab), math.sin(al_) * math.cos(ab))
         el = sh + _n(d1) * 0.58
-        e = 0.2 + 0.7 * max(0.0, math.sin(ph + 0.9))
+        e = 0.2 * arm + 0.7 * arm * max(0.0, math.sin(ph + 0.9))
         al2 = al_ + e
         d2 = _v(math.sin(ab) * sx * 0.6, -math.cos(al2) * math.cos(ab), math.sin(al2) * math.cos(ab))
         wr = el + _n(d2) * 0.58
@@ -97,6 +97,16 @@ def pose_run(t, phase, lean=0.5):
         _hand(j, side, wr, _n(d2 + _v(0, -0.2, 0.1)), curl=0.35 + 0.3 * math.sin(ph))
     j["jaw"] = 0.85
     return j
+
+
+def pose_walk(t, phase):
+    """Langsames, schweres Gehen mit haengenden, schleifenden Armen."""
+    return pose_run(t, phase, lean=0.28, stride=0.42, lift=0.3, arm=0.22)
+
+
+def blend(a, b, k):
+    """Lineare Ueberblendung zweier Posen (gleiche Gelenke)."""
+    return {key: a[key] * (1 - k) + b[key] * k for key in a}
 
 
 def pose_kneel(t, reveal):
@@ -309,7 +319,7 @@ def rasterize(img_shape, cam, jw, project, rot, F, light, tex, fine, t=0.0, segs
             rgb *= (1 - 0.3 * ribs * diff - 0.12 * stern * (h > 0.4))[..., None]
             belly = (h < 0.25) * (1 - s)
             rgb *= (1 - 0.25 * belly)[..., None]
-        elif mat == "head":
+        elif mat == "head" and light.get("face", True):
             q = (dx * aby - dy * abx) / max(math.sqrt(l2), 1e-3) / np.maximum(r, 1e-3)
             for ex in (-0.4, 0.4):
                 e = ((q - ex * 0.9) / 0.12) ** 2 + ((h - 0.7) / 0.06) ** 2

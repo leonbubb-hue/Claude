@@ -12,7 +12,6 @@ rng = np.random.default_rng(96)
 
 L = np.zeros(N)
 R = np.zeros(N)
-CLIP_BUS = np.zeros(N)  # wird NACH dem Limiter addiert -> echtes Clipping
 
 
 # ----------------------------------------------------------------- helpers
@@ -77,7 +76,7 @@ def env_ad(n, a, d, curve=1.0):
     return e ** curve
 
 
-def place(sig, start, gain=1.0, pan=0.0, bus=None):
+def place(sig, start, gain=1.0, pan=0.0):
     """pan -1 = links, +1 = rechts (equal power)."""
     i0 = int(start * SR)
     if i0 >= N:
@@ -87,9 +86,6 @@ def place(sig, start, gain=1.0, pan=0.0, bus=None):
         s = s[-i0:]
         i0 = 0
     a = (pan + 1) * np.pi / 4
-    if bus is not None:
-        bus[i0:i0 + len(s)] += s
-        return
     L[i0:i0 + len(s)] += s * np.cos(a)
     R[i0:i0 + len(s)] += s * np.sin(a)
 
@@ -365,7 +361,7 @@ def build():
     dg = curve([(0, 0.25), (3.7, 0.3), (4.2, 0.65), (9.8, 0.5), (10, 0.35), (15.4, 0.45),
                 (15.5, 0.0), (16.45, 0.0), (16.5, 0.6), (26, 0.6), (35, 0.65), (39.2, 0.75),
                 (39.25, 0.0), (40.0, 0.0), (40.01, 0.9), (44, 0.55), (48.3, 0.7),
-                (49.9, 0.7), (50.0, 0.0), (65, 0.0)])
+                (48.44, 0.7), (48.45, 0.0), (65, 0.0)])
     place(drone * dg, 0, 0.35)
 
     # ---- Szene 1: Polaroid, Atmen, Erstarren, Schluchzen, Bass-Drop
@@ -440,21 +436,37 @@ def build():
     breath_track(42.0, 47.4, 2.8, 0.4, seed=13)
     place(drip(), 45.4, 0.4, -0.2)
 
-    # ---- Szene 5: Sprung, Griff, Gesicht, Clipping, Rauschen
-    scr3 = scream(2.6, seed=31, pitch=1.08)
-    place(scr3, 47.6, 0.95)
-    place(sub_drop(2.0, 100, 30), 48.3, 0.9)
-    final = scream(0.7, seed=41, pitch=1.15)
-    place(np.clip(final * 6.0, -1, 1), 49.25, 1.0, bus=CLIP_BUS)  # absichtliches Clipping
-    st = static(15.2, 7)
-    sgc = curve([(0, 1.0), (4.9, 0.85), (5.0, 0.45), (15.1, 0.35), (15.2, 0.0)], len(st))
-    place(st * sgc, 49.85, 0.75)
-    place(glitch_blip(0.25, 6), 50.3, 0.4)
-    place(glitch_blip(0.25, 7), 55.0, 0.3)
-    place(glitch_blip(0.2, 8), 58.0, 0.3)
-    place(glitch_blip(0.2, 9), 61.5, 0.3)
-    sub = scream(0.12, seed=51)
-    place(sub, 63.0, 0.5)  # Unterschwelliges Gesicht
+    # ---- Szene 5: Sprung, Kamera wird weggeschlagen -> Totenstille, nur Atmen + Herzschlag
+    place(scream(1.0, seed=31, pitch=1.08), 47.6, 0.95)  # bricht hart ab (Gate bei 48.45)
+    n = int(SR * 0.25)
+    whoosh = fft_filter(noise(n), 300, 3000) * np.sin(np.pi * secs(n) / 0.25) ** 2
+    place(whoosh, 48.22, 0.5)
+    # Kamera schlaegt auf: dumpfer Aufprall + Plastikklappern
+    n = int(SR * 0.6)
+    thud = np.sin(2 * np.pi * (55 + 60 * np.exp(-secs(n) * 30)) * secs(n)) * env_ad(n, 0.002, 0.09)
+    thud += 0.6 * fft_filter(noise(n), None, 700) * env_ad(n, 0.001, 0.05)
+    place(thud / np.max(np.abs(thud)), 49.1, 0.8)
+    place(fft_filter(metal_hit(0.5, (900, 1700, 2600, 3900), seed=61, bright=1.4), None, 3500), 49.12, 0.3)
+    place(fft_filter(metal_hit(0.4, (1100, 2100, 3300), seed=62), None, 3000), 49.34, 0.12)
+    # leises Raumrauschen, damit die Stille "echt" klingt
+    room = fft_filter(noise(int(SR * 15.9)), 60, 2500)
+    place(room / np.max(np.abs(room)) * curve([(0, 1), (13.0, 1), (15.9, 0.4)], len(room)), 49.1, 0.012)
+    # dein Atmen: zitternd, wird schwaecher und hoert auf
+    breath_track(49.6, 53.0, 1.6, 0.42, seed=21, ragged=0.35)
+    breath_track(53.0, 57.5, 1.1, 0.3, seed=22, ragged=0.3)
+    breath_track(57.5, 60.3, 0.6, 0.15, seed=23, ragged=0.2)
+    # Herzschlag wird langsamer und setzt aus
+    heartbeat(49.5, 54.5, 118, 90, 0.5)
+    heartbeat(54.5, 59.7, 90, 42, 0.42)
+    # seine Schritte: zwei auf die Kamera zu, dann weg zur Tuer
+    footsteps(50.25, 51.3, 1.9, 1.9, 0.3, 0.38, barefoot=True, seed=24)
+    footsteps(55.65, 58.6, 1.8, 1.7, 0.3, 0.08, barefoot=True, seed=25, pan0=0.0, pan1=-0.3)
+    # Licht flackert aus
+    place(static(0.3, 31) * 0.25, 58.6, 0.12, -0.3)
+    # Polaroid flattert herab und landet
+    place(crinkle(1.8, seed=9), 62.7, 0.18)
+    n = int(SR * 0.08)
+    place(fft_filter(noise(n), 800, 5000) * env_ad(n, 0.001, 0.015), 64.86, 0.15)
 
 
 def limiter(x, thr=0.89, block=240):
@@ -475,7 +487,8 @@ def main():
     build()
     # Harte Totenstille (auch Hall-Fahnen werden abgeschnitten)
     gate = curve([(0, 1), (15.48, 1), (15.52, 0), (16.48, 0), (16.5, 1),
-                  (39.22, 1), (39.27, 0), (39.99, 0), (40.0, 1), (65, 1)])
+                  (39.22, 1), (39.27, 0), (39.99, 0), (40.0, 1),
+                  (48.43, 1), (48.45, 0), (49.09, 0), (49.1, 1), (65, 1)])
     L[:] *= gate
     R[:] *= gate
     st = np.stack([L, R], 1)
@@ -485,7 +498,6 @@ def main():
     st[:, 1] = limiter(st[:, 1])
     gmax = np.max(np.abs(st))
     st = st / max(gmax, 1e-9) * 0.89
-    st += CLIP_BUS[:, None]
     st = np.clip(st, -1.0, 1.0)
     pcm = (st * 32767).astype(np.int16)
     with wave.open("audio.wav", "wb") as w:
