@@ -398,6 +398,8 @@ def build():
     footsteps(16.8, 25.9, 3.2, 3.6, 0.45, 0.5, barefoot=False, seed=9)
     footsteps(17.4, 25.9, 4.5, 6.5, 0.15, 0.85, barefoot=True, seed=10, pan0=-0.2, pan1=0.0)
     place(static(0.1, 2), 21.95, 0.35)
+    place(sub_drop(1.6, 95, 32), 19.75, 0.6)  # zweiter Blick zurueck: er sprintet hinterher
+    place(glitch_blip(0.15, 11), 19.75, 0.25)
     place(glitch_blip(0.2, 4), 23.0, 0.35)
 
     # ---- Szene 3: Tuer, Riegel, Herzschlag, Schrei hinter der Tuer

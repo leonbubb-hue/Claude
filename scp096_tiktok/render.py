@@ -17,6 +17,8 @@ from multiprocessing import Pool
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
+import creature as CR
+
 FPS = 30
 DUR = 65.0
 W, H = 540, 960          # Renderaufloesung der 3D-Szenen
@@ -286,158 +288,93 @@ def _limb(d, a, b, w0, w1, fill):
     d.ellipse([ax - w0, ay - w0, ax + w0, ay + w0], fill=fill)
 
 
-@lru_cache(None)
-def sprite_kneel(reveal):
-    """Kniende, ausgemergelte Gestalt (Frontansicht). reveal=Haende vom Gesicht."""
-    w, h = 600, 700
-    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    s = SKIN
-    sh = (150, 145, 138, 255)
-    # Unterschenkel / Knie am Boden
-    _limb(d, (230, 690), (180, 560), 26, 30, sh)
-    _limb(d, (370, 690), (420, 560), 26, 30, sh)
-    _limb(d, (180, 560), (255, 420), 30, 34, s)
-    _limb(d, (420, 560), (345, 420), 30, 34, s)
-    # Becken + Rumpf (nach vorne gebeugt, ausgemergelt)
-    _poly(d, [(245, 430), (355, 430), (372, 300), (395, 170), (205, 170), (228, 300)], s)
-    for i in range(6):  # Rippen
-        y = 205 + i * 17
-        d.line([(222 + i * 2, y), (300, y + 10), (378 - i * 2, y)], fill=(160, 152, 145, 255), width=4)
-    d.line([(300, 180), (300, 420)], fill=(170, 162, 155, 255), width=5)
-    if not reveal:
-        head = (300, 120)
-        d.ellipse([head[0] - 52, head[1] - 75, head[0] + 52, head[1] + 70], fill=s)
-        # Arme hoch zum Gesicht, Haende davor
-        _limb(d, (212, 180), (150, 300), 17, 14, s)
-        _limb(d, (150, 300), (255, 120), 14, 12, s)
-        _limb(d, (388, 180), (450, 300), 17, 14, s)
-        _limb(d, (450, 300), (345, 120), 14, 12, s)
-        for i in range(5):
-            _limb(d, (255, 125), (268 + i * 7, 45 + i * 8), 8, 5, s)
-            _limb(d, (345, 125), (332 - i * 7, 45 + i * 8), 8, 5, s)
-    else:
-        head = (300, 105)
-        d.ellipse([head[0] - 55, head[1] - 85, head[0] + 55, head[1] + 75], fill=s)
-        d.ellipse([268, 70, 284, 86], fill=(20, 18, 18, 255))
-        d.ellipse([316, 70, 332, 86], fill=(20, 18, 18, 255))
-        d.ellipse([272, 100, 328, 205], fill=(25, 8, 8, 255))  # aufgerissener Mund
-        # Arme weggerissen, lange Finger
-        _limb(d, (212, 180), (95, 260), 17, 14, s)
-        _limb(d, (95, 260), (40, 390), 14, 11, s)
-        _limb(d, (388, 180), (505, 260), 17, 14, s)
-        _limb(d, (505, 260), (560, 390), 14, 11, s)
-        for i in range(4):
-            _limb(d, (40, 390), (20 + i * 12, 470 + i * 4), 6, 4, s)
-            _limb(d, (560, 390), (580 - i * 12, 470 + i * 4), 6, 4, s)
-    im = im.filter(ImageFilter.GaussianBlur(2.2))
-    return np.asarray(im).astype(np.float32) / 255
+def _tex(u, v):
+    return samp(CONC, u * 0.3, v * 0.3)
 
 
-@lru_cache(None)
-def sprite_stand():
-    """Grosse, gebueckte Silhouette (Gegenlicht)."""
-    w, h = 500, 1000
-    im = Image.new("RGBA", (w, h), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    c = (14, 13, 13, 255)
-    d.ellipse([205, 40, 300, 175], fill=c)
-    _poly(d, [(215, 170), (300, 175), (330, 260), (310, 520), (195, 520), (170, 260)], c)
-    _limb(d, (175, 250), (110, 520), 18, 13, c)
-    _limb(d, (110, 520), (95, 820), 13, 9, c)
-    _limb(d, (330, 250), (385, 520), 18, 13, c)
-    _limb(d, (385, 520), (405, 830), 13, 9, c)
-    for i in range(4):
-        _limb(d, (95, 820), (70 + i * 14, 900), 5, 3, c)
-        _limb(d, (405, 830), (420 + i * 10, 905), 5, 3, c)
-    _limb(d, (205, 510), (190, 760), 22, 15, c)
-    _limb(d, (190, 760), (200, 990), 15, 12, c)
-    _limb(d, (300, 510), (318, 760), 22, 15, c)
-    _limb(d, (318, 760), (305, 990), 15, 12, c)
-    im = im.filter(ImageFilter.GaussianBlur(1.5))
-    return np.asarray(im).astype(np.float32) / 255
+def _fine(u, v):
+    return samp(FINE, u, v)
 
 
-def composite(img, spr, cx, bottom, height_px, light=1.0, alpha=1.0, rim=None):
-    """Sprite (RGBA float) in img einsetzen; cx/bottom/hoehe in Renderpixeln."""
-    if height_px < 2:
-        return
-    sh, sw = spr.shape[:2]
-    scale = height_px / sh
-    tw, th = max(1, int(sw * scale)), max(1, int(height_px))
-    x0 = int(cx - tw / 2)
-    y0 = int(bottom - th)
-    pil = Image.fromarray((spr * 255).astype(np.uint8), "RGBA").resize((tw, th), Image.BILINEAR)
-    s = np.asarray(pil).astype(np.float32) / 255
-    ix0, iy0 = max(x0, 0), max(y0, 0)
-    ix1, iy1 = min(x0 + tw, img.shape[1]), min(y0 + th, img.shape[0])
-    if ix1 <= ix0 or iy1 <= iy0:
-        return
-    s = s[iy0 - y0: iy1 - y0, ix0 - x0: ix1 - x0]
-    a = s[..., 3:4] * alpha
-    col = s[..., :3] * light
-    if rim is not None:
-        col = col + rim
-    reg = img[iy0:iy1, ix0:ix1]
-    img[iy0:iy1, ix0:ix1] = reg * (1 - a) + col * a
+def draw_creature(img, cam, pose_fn, pos, yaw, light, t, blur=0.0, shadow=0.5, segs=None):
+    """SCP-096-Rig in das Bild rendern; blur>0: Bewegungsunschaerfe (2 Zeitpunkte)."""
+    times = [t] if blur <= 0 else [t, t - blur]
+    acc_c = np.zeros_like(img)
+    acc_a = np.zeros(img.shape[:2], np.float32)
+    for i, tt in enumerate(times):
+        jw = CR.to_world(pose_fn(tt), pos(tt), yaw)
+        if i == 0 and shadow:
+            CR.contact_shadow(img, cam, jw, project, shadow)
+        col, al, _ = CR.rasterize(img.shape, cam, jw, project, rot, F, light, _tex, _fine, tt, segs)
+        acc_c += col * al[..., None]
+        acc_a += al
+    n = len(times)
+    a = acc_a / n
+    col = acc_c / np.maximum(acc_a, 1e-4)[..., None]
+    img[:] = img * (1 - a[..., None]) + col * a[..., None]
 
 
-@lru_cache(None)
-def hand_layer():
-    """Riesige, ueberlange Hand mit Klauen, greift in die Kamera (1080x1920 RGBA)."""
-    im = Image.new("RGBA", (OW, OH), (0, 0, 0, 0))
-    d = ImageDraw.Draw(im)
-    s = (205, 198, 188, 255)
-    sd = (150, 140, 132, 255)
-    palm = (540, 1500)
-    d.ellipse([300, 1150, 800, 1900], fill=s)
-    _limb(d, (540, 2100), palm, 260, 240, s)
-    tips = [(-520, 300), (-170, -60), (130, -150), (420, -10), (700, 420)]
-    for i, (tx, ty) in enumerate(tips):
-        base = (palm[0] + (i - 2) * 95, 1250 if i else 1450)
-        mid = ((base[0] + tx + 540) / 2 + (i - 2) * 40, (base[1] + ty) / 2 + 60)
-        _limb(d, base, mid, 52, 40, s)
-        _limb(d, mid, (tx + 540, ty + 0), 40, 30, s)
-        d.line([mid[0] - 25, mid[1], mid[0] + 25, mid[1] + 8], fill=sd, width=6)
-        # Klaue
-        cx, cy = tx + 540, ty
-        _poly(d, [(cx - 26, cy + 10), (cx + 26, cy + 10), (cx + 4, cy - 90)], (35, 20, 18, 255))
-        d.ellipse([cx - 40, cy - 10, cx + 40, cy + 60], fill=(120, 25, 20, 230))
-    for i in range(14):  # Sehnen / Falten
-        y = 1300 + i * 40
-        d.line([(380, y), (700, y + 20)], fill=(185, 178, 168, 255), width=3)
-    im = im.filter(ImageFilter.GaussianBlur(9))
-    a = np.asarray(im).astype(np.float32) / 255
-    # Volumen: Rand dunkler (Alpha-Erosion als Schattierung), Hautstruktur, Rotlicht
-    alpha = a[..., 3]
-    shade = np.asarray(Image.fromarray((alpha * 255).astype(np.uint8)).filter(ImageFilter.GaussianBlur(40))).astype(np.float32) / 255
-    tex = np.asarray(Image.fromarray((CONC * 255).astype(np.uint8)).resize((OW, OH))).astype(np.float32) / 255
-    a[..., :3] *= (0.25 + 0.75 * shade ** 1.5)[..., None] * (0.75 + 0.35 * tex)[..., None]
-    yy = np.linspace(0, 1, OH)[:, None, None]
-    a[..., :3] *= np.array([1.0, 0.72, 0.68]) * (0.55 + 0.45 * yy)
-    return a
+def corridor_light_at(z, t, chaos):
+    k = round(z / 6)
+    fl = float(flicker(k, t, chaos))
+    return fl * (0.35 + 0.65 * math.exp(-((z - 6 * k) ** 2) / 6.0))
 
 
 @lru_cache(None)
 def face_base():
-    """Das Gesicht - wird beim Zeigen immer stark zerstoert/verzerrt."""
-    im = Image.new("RGB", (OW, OH), (4, 4, 4))
-    d = ImageDraw.Draw(im)
-    skin = (200, 194, 186)
-    d.ellipse([90, -350, 990, 2150], fill=skin)
-    d.ellipse([260, 330, 450, 470], fill=(30, 28, 28))
-    d.ellipse([630, 330, 820, 470], fill=(30, 28, 28))
-    d.ellipse([345, 385, 365, 405], fill=(235, 235, 235))
-    d.ellipse([715, 385, 735, 405], fill=(235, 235, 235))
-    d.ellipse([500, 560, 540, 640], fill=(120, 110, 105))
-    d.ellipse([580, 560, 620, 640], fill=(120, 110, 105))
-    d.ellipse([230, 700, 850, 1900], fill=(40, 6, 6))       # Maul, grotesk aufgerissen
-    d.ellipse([320, 820, 760, 1820], fill=(8, 0, 0))
-    for i in range(12):
-        x = 260 + i * 50
-        d.polygon([(x, 760 + abs(i - 6) * 25), (x + 18, 760 + abs(i - 6) * 25), (x + 9, 850 + abs(i - 6) * 25)], fill=(190, 180, 150))
-    im = im.filter(ImageFilter.GaussianBlur(3))
-    return np.asarray(im).astype(np.float32) / 255
+    """Das Gesicht als schattiertes Relief - wird beim Zeigen stark zerstoert."""
+    hw, hh = OW // 2, OH // 2
+    y, x = np.mgrid[0:hh, 0:hw].astype(np.float32)
+    X = (x - hw / 2) / (hw / 2)
+    Y = (y - hh * 0.42) / (hw / 2)
+    def g(cx, cy, sx, sy):
+        return np.exp(-(((X - cx) / sx) ** 2 + ((Y - cy) / sy) ** 2))
+    head = np.clip(1 - (X / 0.86) ** 2 - ((Y - 0.35) / 2.1) ** 2, 0, 1)
+    hgt = np.sqrt(head)
+    hgt += 0.07 * (g(-0.33, -0.62, 0.3, 0.08) + g(0.33, -0.62, 0.3, 0.08))      # Brauenwulst
+    hgt -= 0.16 * (g(-0.33, -0.45, 0.16, 0.13) + g(0.33, -0.45, 0.16, 0.13))    # Augenhoehlen
+    hgt += 0.08 * (g(-0.5, -0.05, 0.16, 0.25) + g(0.5, -0.05, 0.16, 0.25))      # Wangenknochen
+    hgt -= 0.06 * (g(-0.42, 0.25, 0.12, 0.4) + g(0.42, 0.25, 0.12, 0.4))        # eingefallene Wangen
+    hgt += 0.05 * g(0, -0.2, 0.06, 0.18)                                        # Nasenruecken
+    mx, my = X / 0.42, (Y - 0.95) / 0.95
+    mr = np.sqrt(mx ** 2 + my ** 2)
+    ang = np.arctan2(my, mx)
+    hgt += 0.015 * np.sin(ang * 34) * np.exp(-((mr - 1.15) / 0.15) ** 2)       # gedehnte Hautfalten
+    hgt += 0.05 * np.exp(-((mr - 1.05) / 0.08) ** 2)                            # Lippenwulst
+    gy, gx = np.gradient(hgt * 60)
+    nrm = np.stack([-gx, -gy, np.ones_like(gx)], -1)
+    nrm /= np.linalg.norm(nrm, axis=-1, keepdims=True)
+    L = np.array([-0.35, -0.55, 0.76]); L /= np.linalg.norm(L)
+    diff = np.clip(nrm @ L, 0, 1)
+    Hv = (L + np.array([0, 0, 1.0])); Hv /= np.linalg.norm(Hv)
+    spec = np.clip(nrm @ Hv, 0, 1) ** 30 * 0.25
+    tex = np.asarray(Image.fromarray((CONC * 255).astype(np.uint8)).resize((hw, hh))).astype(np.float32) / 255
+    fn = np.asarray(Image.fromarray((FINE * 255).astype(np.uint8)).resize((hw, hh))).astype(np.float32) / 255
+    alb = np.ones((hh, hw, 3), np.float32) * np.array([0.80, 0.76, 0.70])
+    alb *= (0.8 + 0.35 * (tex - 0.5))[..., None]
+    vein = np.clip(1 - np.abs(fn - 0.5) / 0.012, 0, 1) * 0.4
+    alb *= (1 - vein[..., None] * np.array([0.35, 0.2, 0.0]))
+    col = alb * (0.08 + 0.95 * diff[..., None]) + spec[..., None]
+    sss = np.clip(1 - diff, 0, 1)[..., None] * np.array([0.08, 0.02, 0.02])     # rotliche Schatten
+    col += sss * (head > 0)[..., None]
+    # Augen: kleine, glaenzend schwarze Kugeln
+    for ex in (-0.33, 0.33):
+        e = ((X - ex) / 0.07) ** 2 + ((Y + 0.45) / 0.06) ** 2
+        col = np.where((e < 1)[..., None], 0.02 + 0.5 * (np.clip(1 - ((X - ex + 0.02) ** 2 + (Y + 0.47) ** 2) / 0.0004, 0, 1))[..., None], col)
+    # Nasenloecher
+    for nx in (-0.06, 0.06):
+        e = ((X - nx) / 0.035) ** 2 + ((Y + 0.02) / 0.02) ** 2
+        col = np.where((e < 1)[..., None], col * 0.15, col)
+    # Maul: tief, mit Zaehnen am Oberkiefer
+    inside = mr < 1.0
+    depth = np.clip(1 - mr, 0, 1)
+    mcol = np.array([0.16, 0.03, 0.03]) * (1 - depth[..., None] ** 0.4)
+    col = np.where(inside[..., None], mcol, col)
+    tooth = inside & (my < -0.6) & (np.sin(mx * 30) > 0.2) & (my > -0.98 + 0.25 * np.abs(np.sin(mx * 15)))
+    col = np.where(tooth[..., None], np.array([0.62, 0.57, 0.45]) * (0.6 + 0.4 * diff[..., None]), col)
+    col = col * (head > 0)[..., None] + 0.015 * (head <= 0)[..., None]
+    img = Image.fromarray((np.clip(col, 0, 1) * 255).astype(np.uint8)).resize((OW, OH), Image.BICUBIC)
+    return np.asarray(img).astype(np.float32) / 255
 
 
 def face_frame(seed):
@@ -445,7 +382,7 @@ def face_frame(seed):
     f = face_base()
     yy = np.arange(OH)[:, None]
     xx = np.arange(OW)[None, :]
-    amp = r.uniform(40, 110)
+    amp = r.uniform(25, 75)
     sx = (xx + amp * np.sin(yy / r.uniform(25, 70) + r.uniform(0, 6)) + r.uniform(-60, 60)).astype(int) % OW
     sy = (yy + 0.4 * amp * np.sin(xx / r.uniform(40, 90))).astype(int) % OH
     g = f[sy, sx]
@@ -576,6 +513,13 @@ def corridor_z(t):
 
 
 Z_FIG = 6 * round((corridor_z(13.6) - 12.0) / 6) + 0.6
+RUN_T0, RUN_T1 = 19.55, 21.15   # zweiter Blick zurueck: SCP-096 sprintet hinterher
+
+
+def run_pos(t):
+    k = (t - RUN_T0) / (RUN_T1 - RUN_T0)
+    d = lerp(12.0, 4.2, k ** 1.15)
+    return (0.25 * math.sin(t * 1.7), 0.0, corridor_z(t) - d)
 Z_END = corridor_z(25.92) + 1.05
 
 
@@ -594,6 +538,8 @@ def corridor_cam(t):
     roll = 0.05 * amp * math.sin(ph / 2) + 0.03 * wobble(t, 5)
     # Blick ueber die Schulter
     look = sm((t - 13.3) / 0.42) - sm((t - 16.62) / 0.22)
+    look2 = sm((t - 19.62) / 0.28) - sm((t - 20.95) / 0.17)
+    look = max(look, look2)
     yaw += look * 3.02
     pitch += look * 0.02
     roll += look * 0.06 * math.sin(t * 3)
@@ -855,10 +801,9 @@ def scene1(t):
     img += bg
     # unscharfe Gestalt in der Dunkelheit (kaum sichtbar)
     if t > 8.2:
-        p = project(cam, (0.0, 0.0, 14.0))
-        if p:
-            vis = 0.06 * sm((t - 8.2) / 1.2)
-            composite(img, sprite_kneel(False), p[0], p[1], 1.4 * F / p[2], light=vis, alpha=0.9)
+        vis = 0.12 * sm((t - 8.2) / 1.2)
+        draw_creature(img, cam, lambda tt: CR.pose_kneel(tt, 0.0), lambda tt: (0.0, 0.0, 13.0), math.pi + 0.6,
+                      dict(key_dir=(0, 1, -0.5), key=vis, ambient=0.01, fog=0.12), t, shadow=0)
     # Polaroid + Daumen
     card = polaroid()
     th = thumbs()
@@ -912,13 +857,14 @@ def scene_corridor(t):
     img, depth = render_box(cam, sc, t)
     # die Gestalt am Ende des Ganges
     if 13.0 < t < 16.9:
-        p = project(cam, (0.05, 0.0, Z_FIG))
-        if p:
-            reveal = t >= 15.5
-            kf = float(flicker(round(Z_FIG / 6), t, chaos))
-            lit = 0.75 * kf * math.exp(-p[2] * 0.05) + 0.03
-            jit = (np.random.default_rng(int(t * FPS)).uniform(-2, 2) if reveal else 0)
-            composite(img, sprite_kneel(reveal), p[0] + jit, p[1], 1.45 * F / p[2], light=lit)
+        rv = sm((t - 15.5) / 0.16)
+        lit = 1.25 * corridor_light_at(Z_FIG, t, chaos) + 0.05
+        draw_creature(img, cam, lambda tt: CR.pose_kneel(tt, sm((tt - 15.5) / 0.16)), lambda tt: (0.05, 0.0, Z_FIG),
+                      lerp(0.75, 0.12, rv), dict(key_dir=(0.1, 1.0, 0.3), key=lit, ambient=0.04, fog=0.075, rim=0.05), t)
+    if RUN_T0 < t < RUN_T1:
+        lit = 1.7 * corridor_light_at(run_pos(t)[2], t, chaos) + 0.12
+        draw_creature(img, cam, lambda tt: CR.pose_run(tt, tt * 2.5), run_pos, 0.0,
+                      dict(key_dir=(0.1, 1.0, 0.4), key=lit, ambient=0.05, fog=0.075, rim=0.06), t, blur=1 / 70)
     k = 0.0
     if 22.0 <= t < 22.08 or 9.95 <= t < 10.08:
         k = 1.0
@@ -997,15 +943,17 @@ def scene_room(t):
         # Gestalt in der Tueroeffnung
         if 45.5 <= t < 48.3:
             vis = float(flicker(3, t, 0.25)) > 0.3 or t > 46.2
-            if vis:
-                lunge = sm((t - 47.6) / 0.7)
-                zf = lerp(-0.4, 4.6, lunge)
-                pr = project(cam, (lerp(0.0, 1.6, lunge), lerp(0.0, 0.2, lunge), zf))
-                if pr:
-                    tw = 0.0
-                    if 46.4 < t < 47.6:  # Kopf zuckt
-                        tw = 3 * math.sin(t * 40) * (np.random.default_rng(int(t * 30)).random() > 0.6)
-                    composite(img, sprite_stand(), pr[0] + tw, pr[1], 2.25 * F / pr[2], light=1.0)
+            if vis and t < 47.6:
+                draw_creature(img, cam, CR.pose_stand, lambda tt: (0.0, 0.0, 0.08), 0.0,
+                              dict(key_dir=(0.0, 0.35, -1.0), key=0.35 * beyond, ambient=0.03, rim=1.1 * beyond,
+                                   rim_col=(0.75, 0.82, 0.9), tint=(1.0, 0.88, 0.88)), t, shadow=0.3)
+            elif vis:
+                def lunge_pos(tt):
+                    k = sm((tt - 47.6) / 0.7)
+                    return (lerp(0.0, 1.45, k), 0.0, lerp(0.08, 4.2, k))
+                draw_creature(img, cam, lambda tt: CR.pose_run(tt, tt * 3.0, lean=0.65), lunge_pos, 0.33,
+                              dict(key_dir=(-0.4, 0.6, 0.5), key=0.75, ambient=0.03, rim=0.5 * beyond,
+                                   tint=(1.0, 0.62, 0.6)), t, blur=1 / 60, shadow=0.4)
         fx["dust"] = dust
     gain = 1.35
     if 40.0 <= t < 40.07:
@@ -1101,20 +1049,20 @@ def scene_end(t):
         img = post(img, t, tint=(1.0, 0.9, 0.9), gain=1.6, ab=3)
         img = tracking_glitch(img, t, 0.6)
         out = upscale(img)
-        hand = hand_layer()
-        k = sm((t - 48.3) / 0.35)
-        sc_ = lerp(0.35, 1.25, k)
-        hw, hh = int(OW * sc_), int(OH * sc_)
-        hp = Image.fromarray((hand * 255).astype(np.uint8), "RGBA").resize((hw, hh), Image.BILINEAR)
-        hp = hp.rotate(-25 * lift, resample=Image.BILINEAR)
-        ha = np.asarray(hp).astype(np.float32) / 255
-        x0 = (OW - hw) // 2 + int(80 * wobble(t * 9, 73))
-        y0 = (OH - hh) // 2 + int(lerp(500, 250, k)) + int(400 * lift)
-        ix0, iy0, ix1, iy1 = max(0, x0), max(0, y0), min(OW, x0 + hw), min(OH, y0 + hh)
-        if ix1 > ix0 and iy1 > iy0:
-            s = ha[iy0 - y0:iy1 - y0, ix0 - x0:ix1 - x0]
-            a = s[..., 3:4]
-            out[iy0:iy1, ix0:ix1] = out[iy0:iy1, ix0:ix1] * (1 - a) + s[..., :3] * 0.85 * a
+        k = sm((t - 48.3) / 0.45)
+        close = sm((t - 48.68) / 0.32)
+        hcam = dict(pos=(0.0, 0.0, 0.0), yaw=0.0, pitch=0.0, roll=0.25 * wobble(t * 8, 77))
+        himg = np.zeros((H, W, 3), np.float32)
+        col, al, _ = CR.rasterize(himg.shape, hcam, CR.pose_grab(k, close), project, rot, F,
+                                  dict(key_dir=(-0.5, 0.8, -0.4), key=0.9, ambient=0.05, rim=0.25,
+                                       rim_col=(0.9, 0.3, 0.25), tint=(1.0, 0.8, 0.78)),
+                                  _tex, _fine, t, CR.hand_segments("r"))
+        col = post(col, t, gain=1.2, ab=2)
+        hup = upscale(col)
+        aup = np.asarray(Image.fromarray((al * 255).astype(np.uint8)).resize((OW, OH), Image.BILINEAR)).astype(np.float32)[..., None] / 255
+        out = out * (1 - aup) + hup * aup
+        cover = sm((t - 48.98) / 0.22)  # Hand schliesst sich ueber der Linse
+        out = out * (1 - 0.88 * cover) + 0.88 * cover * np.array([0.13, 0.035, 0.03], np.float32)
         out = shift_rot(out, 40 * wobble(t * 20, 74), 40 * wobble(t * 20, 75), 0.04 * wobble(t * 15, 76))
         return out
     if t < 49.9:
