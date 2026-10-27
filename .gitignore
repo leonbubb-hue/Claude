@@ -1,0 +1,5 @@
+scp096_tiktok/*.wav
+scp096_tiktok/*.mp4
+scp096_tiktok/stills/
+scp096_tiktok/render.log
+scp096_tiktok/__pycache__/
